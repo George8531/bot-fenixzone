@@ -17,7 +17,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Mantiene vivo el servicio de Render haciendo una autofila web cada 10 min
+# Mantiene vivo el servicio de Render haciendo una autopetición web cada 10 min
 def auto_ping():
     time.sleep(10)
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
@@ -62,15 +62,31 @@ def escuchar_mensajes():
                     last_update_id = result["update_id"]
                     message = result.get("message", {})
                     texto = message.get("text", "")
-                    sender_id = message.get("chat", {}).get("id")
+                    sender = message.get("from", {})
+                    sender_id = str(sender.get("id", ""))
+                    first_name = sender.get("first_name", "Desconocido")
+                    username = sender.get("username", "Sin username")
                     
                     if texto.strip() == "/start" and sender_id:
+                        # 1. Responder al usuario que escribió /start
                         respuesta = (
                             "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
                             "Te avisaré automáticamente por este medio cada vez que el Servidor 1 "
                             "se caiga o se reinicie."
                         )
                         enviar_telegram(respuesta, chat_target=sender_id)
+                        
+                        # 2. Si el usuario NO eres tú, avisarte a ti por privado
+                        if sender_id != CHAT_ID:
+                            notif_admin = (
+                                f"👤 **¡Nuevo usuario interactuando!**\n\n"
+                                f"• **Nombre:** {first_name}\n"
+                                f"• **Usuario:** @{username}\n"
+                                f"• **ID Telegram:** `{sender_id}`\n"
+                                f"• **Acción:** Usó el comando `/start`."
+                            )
+                            enviar_telegram(notif_admin, chat_target=CHAT_ID)
+                            
         except Exception as e:
             print(f"Error en polling de Telegram: {e}")
             
