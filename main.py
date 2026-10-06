@@ -64,5 +64,9 @@ def monitorear():
 if __name__ == "__main__":
     # Iniciar servidor web en segundo plano
     threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Enviar mensaje de prueba confirmando que el bot encendió
+    enviar_telegram("✅ **Bot de FénixZone S1 iniciado correctamente en Render.** Te avisaré apenas haya un reinicio.")
+    
     # Iniciar monitoreo del servidor del juego
     monitorear()
