@@ -32,19 +32,36 @@ def auto_ping():
 
 # === DATOS DE CONFIGURACIÓN ===
 BOT_TOKEN = "8836352471:AAHtKE6tPbBsxc2jdBAjpIA1SeQcRJy8gk0"
-CHAT_ID = "5484160028"
+ADMIN_CHAT_ID = "5484160028"
 
 # Servidor FénixZone S1
 IP_SERVIDOR = "s1.fenixzone.com"
 PUERTO_SERVIDOR = 7777
 
-def enviar_telegram(mensaje, chat_target=CHAT_ID):
+# Set de usuarios registrados (incluye por defecto al admin)
+SUSCRIPTORES = {ADMIN_CHAT_ID}
+
+def enviar_telegram(mensaje, chat_target=None):
+    """
+    Si chat_target especifica un ID, envía a ese usuario.
+    Si chat_target es None, transmite a TODOS los suscriptores.
+    """
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_target, "text": mensaje, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Error al enviar a Telegram: {e}")
+    
+    if chat_target:
+        payload = {"chat_id": chat_target, "text": mensaje, "parse_mode": "Markdown"}
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"Error enviando mensaje a {chat_target}: {e}")
+    else:
+        # Envío masivo a todos los suscriptores
+        for user_id in list(SUSCRIPTORES):
+            payload = {"chat_id": user_id, "text": mensaje, "parse_mode": "Markdown"}
+            try:
+                requests.post(url, json=payload, timeout=5)
+            except Exception as e:
+                print(f"Error enviando broadcast a {user_id}: {e}")
 
 # === ATENDER COMANDOS DE TELEGRAM (/start) ===
 def escuchar_mensajes():
@@ -68,24 +85,27 @@ def escuchar_mensajes():
                     username = sender.get("username", "Sin username")
                     
                     if texto.strip() == "/start" and sender_id:
+                        es_nuevo = sender_id not in SUSCRIPTORES
+                        SUSCRIPTORES.add(sender_id)
+                        
                         # 1. Responder al usuario que escribió /start
                         respuesta = (
                             "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
-                            "Te avisaré automáticamente por este medio cada vez que el Servidor 1 "
-                            "se caiga o se reinicie."
+                            "Estás registrado para recibir alertas automáticamente en privado cuando el Servidor 1 "
+                            "se caiga, se reinicie o al momento del pago diario (:02)."
                         )
                         enviar_telegram(respuesta, chat_target=sender_id)
                         
-                        # 2. Si el usuario NO eres tú, avisarte a ti por privado
-                        if sender_id != CHAT_ID:
+                        # 2. Si es una persona nueva y no es el Admin, avisarle al Admin
+                        if es_nuevo and sender_id != ADMIN_CHAT_ID:
                             notif_admin = (
-                                f"👤 **¡Nuevo usuario interactuando!**\n\n"
+                                f"👤 **¡Nuevo suscriptor registrado!**\n\n"
                                 f"• **Nombre:** {first_name}\n"
                                 f"• **Usuario:** @{username}\n"
                                 f"• **ID Telegram:** `{sender_id}`\n"
-                                f"• **Acción:** Usó el comando `/start`."
+                                f"• **Total Suscriptores:** {len(SUSCRIPTORES)}"
                             )
-                            enviar_telegram(notif_admin, chat_target=CHAT_ID)
+                            enviar_telegram(notif_admin, chat_target=ADMIN_CHAT_ID)
                             
         except Exception as e:
             print(f"Error en polling de Telegram: {e}")
@@ -101,7 +121,8 @@ def temporizador_pago_diario():
         ahora = datetime.now()
         if ahora.minute == 2 and ahora.minute != ultimo_minuto_enviado:
             mensaje_pago = "💵 **Notificación:** Se ha emitido un pago diario."
-            enviar_telegram(mensaje_pago)
+            # Al pasar chat_target=None, se envía a todos los suscriptores
+            enviar_telegram(mensaje_pago, chat_target=None)
             ultimo_minuto_enviado = ahora.minute
         elif ahora.minute != 2:
             ultimo_minuto_enviado = -1
@@ -130,12 +151,14 @@ def monitorear():
         
         if esta_online and not estado_anterior:
             mensaje = "🚨 **¡ALERTA FÉNIXZONE S1!** 🚨\n\nEl Servidor 1 se ha **reiniciado** y ya está en línea de nuevo. ¡Aprovecha para entrar!"
-            enviar_telegram(mensaje)
+            # Transmisión masiva a todos los suscriptores
+            enviar_telegram(mensaje, chat_target=None)
             estado_anterior = True
             
         elif not esta_online and estado_anterior:
             mensaje = "⚠️ **FénixZone S1 se ha caído / apagado.** Monitoreando..."
-            enviar_telegram(mensaje)
+            # Transmisión masiva a todos los suscriptores
+            enviar_telegram(mensaje, chat_target=None)
             estado_anterior = False
             
         time.sleep(15)
