@@ -4,7 +4,7 @@ import threading
 import requests
 from flask import Flask
 
-# Servidor Flask para mantener vivo el servicio en Render Gratis
+# Servidor Flask para mantener activo el servicio en Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -62,11 +62,11 @@ def monitorear():
         time.sleep(15)
 
 if __name__ == "__main__":
-    # Iniciar servidor web en segundo plano
+    # Arranca el servidor web en el puerto 10000 que Render detectará
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # Enviar mensaje de prueba confirmando que el bot encendió
-    enviar_telegram("✅ **Bot de FénixZone S1 iniciado correctamente en Render.** Te avisaré apenas haya un reinicio.")
+    # Mensaje de confirmación a Telegram al encender
+    enviar_telegram("✅ **Bot de FénixZone S1 iniciado con éxito en Render.** Te avisaré si hay reinicios.")
     
-    # Iniciar monitoreo del servidor del juego
+    # Inicia el ciclo de monitoreo
     monitorear()
