@@ -1,24 +1,26 @@
+import os
 import time
 import socket
 import threading
 import requests
 from flask import Flask
 
-# Servidor Flask para mantener activo el servicio en Render
+# Servidor Flask para Render
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot de FénixZone S1 activo 24/7"
+    return "Bot de FénixZone S1 activo 24/7", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
-# === TUS DATOS DE TELEGRAM ===
+# === TUS DATOS INTEGRADOS ===
 BOT_TOKEN = "8836352471:AAHtKE6tPbBsxc2jdBAjpIA1SeQcRJy8gk0"
 CHAT_ID = "5484160028"
 
-# Datos FénixZone S1
+# Servidor FénixZone S1
 IP_SERVIDOR = "s1.fenixzone.com"
 PUERTO_SERVIDOR = 7777
 
@@ -28,7 +30,7 @@ def enviar_telegram(mensaje):
     try:
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"Error Telegram: {e}")
+        print(f"Error al enviar a Telegram: {e}")
 
 def verificar_servidor():
     try:
@@ -43,6 +45,9 @@ def verificar_servidor():
         return False
 
 def monitorear():
+    time.sleep(3)
+    enviar_telegram("✅ **¡Bot activado!** Monitoreando FénixZone S1 24/7 desde Render.")
+    
     estado_anterior = True
     print("Iniciando monitoreo de FénixZone S1...")
     
@@ -62,11 +67,8 @@ def monitorear():
         time.sleep(15)
 
 if __name__ == "__main__":
-    # Arranca el servidor web en el puerto 10000 que Render detectará
-    threading.Thread(target=run_flask, daemon=True).start()
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
     
-    # Mensaje de confirmación a Telegram al encender
-    enviar_telegram("✅ **Bot de FénixZone S1 iniciado con éxito en Render.** Te avisaré si hay reinicios.")
-    
-    # Inicia el ciclo de monitoreo
     monitorear()
