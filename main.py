@@ -17,6 +17,19 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# Mantiene vivo el servicio de Render haciendo una autofila web cada 10 min
+def auto_ping():
+    time.sleep(10)
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    while True:
+        if render_url:
+            try:
+                requests.get(render_url, timeout=5)
+                print("Auto-ping realizado con éxito para mantener vivo Render.")
+            except Exception as e:
+                print(f"Error en auto-ping: {e}")
+        time.sleep(600) # 10 minutos
+
 # === DATOS DE CONFIGURACIÓN ===
 BOT_TOKEN = "8836352471:AAHtKE6tPbBsxc2jdBAjpIA1SeQcRJy8gk0"
 CHAT_ID = "5484160028"
@@ -70,7 +83,6 @@ def temporizador_pago_diario():
     
     while True:
         ahora = datetime.now()
-        # Si estamos en el minuto 2 y aún no se ha enviado en esta hora
         if ahora.minute == 2 and ahora.minute != ultimo_minuto_enviado:
             mensaje_pago = "💵 **Notificación:** Se ha emitido un pago diario."
             enviar_telegram(mensaje_pago)
@@ -113,14 +125,17 @@ def monitorear():
         time.sleep(15)
 
 if __name__ == "__main__":
-    # 1. Iniciar servidor web Flask
+    # 1. Servidor Web Flask
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # 2. Iniciar escucha de comandos /start
+    # 2. Auto-ping para evitar suspend en Render
+    threading.Thread(target=auto_ping, daemon=True).start()
+    
+    # 3. Escucha de comandos /start
     threading.Thread(target=escuchar_mensajes, daemon=True).start()
     
-    # 3. Iniciar temporizador de pago diario (:02 de cada hora)
+    # 4. Temporizador de pago diario (:02 cada hora)
     threading.Thread(target=temporizador_pago_diario, daemon=True).start()
     
-    # 4. Iniciar monitoreo del juego
+    # 5. Monitoreo del juego
     monitorear()
