@@ -28,7 +28,8 @@ def auto_ping():
                 print(f"Error en auto-ping: {e}")
         time.sleep(300)
 
-BOT_TOKEN = "8836352471:AAHtKE6tPbBsxc2jdBAjpIA1SeQcRJy8gk0"
+# === NUEVO TOKEN SEGURO ===
+BOT_TOKEN = "8836352471:AAEabVwZQ4nSqo35cKXQLVpeHselFNW879s"
 ADMIN_CHAT_ID = "5484160028"
 
 IP_SERVIDOR = "s1.fenixzone.com"
