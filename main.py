@@ -57,39 +57,54 @@ def enviar_telegram(mensaje, chat_target=None):
             except Exception as e:
                 print(f"Error enviando broadcast a {user_id}: {e}")
 
+def notificar_actualizacion():
+    """Envía una alerta al administrador cada vez que el script arranca o se actualiza."""
+    time.sleep(3) # Espera a que el bot inicie conexión
+    mensaje = (
+        "🛠 **¡Script Actualizado / Reiniciado!**\n\n"
+        "El administrador @x_george ha aplicado un nuevo ajuste o modificación en el código del bot. 🚀"
+    )
+    enviar_telegram(mensaje, chat_target=ADMIN_CHAT_ID)
+
 def obtener_info_servidor():
-    """Consulta el servidor SA-MP y extrae estado, jugadores, maxplayers y tiempo de respuesta."""
-    try:
-        ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1.5)
-        
-        ip_bytes = socket.inet_aton(ip_resuelta)
-        port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
-        query = b"SAMP" + ip_bytes + port_bytes + b"i"
-        
-        start_time = time.time()
-        sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
-        data, _ = sock.recvfrom(2048)
-        latencia = int((time.time() - start_time) * 1000)
-        sock.close()
-        
-        if len(data) > 10:
-            i = 11
-            password = data[i]
-            i += 1
-            players = int.from_bytes(data[i:i+2], 'little')
-            i += 2
-            maxplayers = int.from_bytes(data[i:i+2], 'little')
+    """Consulta el servidor SA-MP con doble reintento para evitar datos erróneos."""
+    for intento in range(2):
+        try:
+            ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2)
             
-            return {
-                "online": True, 
-                "players": players, 
-                "maxplayers": maxplayers, 
-                "ping": latencia
-            }
-    except Exception:
-        pass
+            ip_bytes = socket.inet_aton(ip_resuelta)
+            port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
+            query = b"SAMP" + ip_bytes + port_bytes + b"i"
+            
+            start_time = time.time()
+            sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
+            data, _ = sock.recvfrom(2048)
+            latencia = int((time.time() - start_time) * 1000)
+            sock.close()
+            
+            if len(data) > 10:
+                i = 11
+                password = data[i]
+                i += 1
+                players = int.from_bytes(data[i:i+2], 'little')
+                i += 2
+                maxplayers = int.from_bytes(data[i:i+2], 'little')
+                
+                if players == 0 and intento == 0:
+                    time.sleep(0.5)
+                    continue
+                
+                return {
+                    "online": True, 
+                    "players": players, 
+                    "maxplayers": maxplayers, 
+                    "ping": latencia
+                }
+        except Exception:
+            pass
+        time.sleep(0.5)
     
     return {"online": False, "players": 0, "maxplayers": 0, "ping": 0}
 
@@ -136,7 +151,6 @@ def escuchar_mensajes():
                     first_name = sender.get("first_name", "Desconocido")
                     username = sender.get("username", "Sin username")
                     
-                    # Comando /start
                     if texto == "/start" and sender_id:
                         es_nuevo = sender_id not in SUSCRIPTORES
                         SUSCRIPTORES.add(sender_id)
@@ -161,13 +175,11 @@ def escuchar_mensajes():
                             )
                             enviar_telegram(notif_admin, chat_target=ADMIN_CHAT_ID)
 
-                    # Comando /pd o /pagodiario
                     elif texto in ["/pd", "/pagodiario"] and sender_id:
                         mins, segs = tiempo_hasta_pago()
                         msg_pd = f"💵 **Pago Diario:** Faltan **{mins} min {segs} seg** para la entrega del pago diario (:02)."
                         enviar_telegram(msg_pd, chat_target=sender_id)
 
-                    # Comando /players o /jugadores
                     elif texto in ["/players", "/jugadores"] and sender_id:
                         info = obtener_info_servidor()
                         if info["online"]:
@@ -176,7 +188,6 @@ def escuchar_mensajes():
                             msg_players = "🔴 **FénixZone S1** se encuentra actualmente *apagado o inaccesible*."
                         enviar_telegram(msg_players, chat_target=sender_id)
 
-                    # Comando /estado
                     elif texto in ["/estado", "/status"] and sender_id:
                         info = obtener_info_servidor()
                         if info["online"]:
@@ -193,7 +204,6 @@ def escuchar_mensajes():
                             msg_estado = f"🌐 **ESTADO DEL SERVIDOR FÉNIXZONE S1**\n\n• **Estado:** 🔴 Apagado / Caído\n• **IP:** `{IP_SERVIDOR}:{PUERTO_SERVIDOR}`"
                         enviar_telegram(msg_estado, chat_target=sender_id)
 
-                    # Comando /historial o /logs
                     elif texto in ["/historial", "/logs"] and sender_id:
                         if HISTORIAL_CAIDAS:
                             registro = "\n".join([f"• {item}" for item in HISTORIAL_CAIDAS[-5:]])
@@ -202,7 +212,6 @@ def escuchar_mensajes():
                             msg_logs = "📜 **Historial:** No se han detectado caídas o reinicios recientemente."
                         enviar_telegram(msg_logs, chat_target=sender_id)
 
-                    # Comando /broadcast (Exclusivo para el Administrador)
                     elif texto.startswith("/broadcast") and sender_id == ADMIN_CHAT_ID:
                         partes = message.get("text", "").split(" ", 1)
                         if len(partes) > 1:
@@ -221,26 +230,24 @@ def monitorear():
     estado_anterior = True
     alerta_bajos_enviada = False
     hora_caida = None
-    print("Iniciando monitoreo avanzado de FénixZone S1 (cada 2 segundos)...")
+    print("Iniciando monitoreo de FénixZone S1 (cada 2 segundos)...")
     
     while True:
         info = obtener_info_servidor()
         esta_online = info["online"]
         jugadores = info["players"]
         
-        # Confirmación de caída (evita falsas alarmas por pequeñas fallas de red)
-        if not esta_online and estado_anterior:
+        if esta_online and jugadores == 0:
             time.sleep(1)
-            reintento = obtener_info_servidor()
-            esta_online = reintento["online"]
-        
-        # 1. Detección de Reinicio (vuelve a estar en línea)
+            verificacion_extra = obtener_info_servidor()
+            if verificacion_extra["online"] and verificacion_extra["players"] > 0:
+                jugadores = verificacion_extra["players"]
+
         if esta_online and not estado_anterior:
             hora_reinicio = datetime.now().strftime("%H:%M:%S")
             mensaje = "🚨 **El servidor se ha reiniciado y ya esta disponible**"
             enviar_telegram(mensaje, chat_target=None)
             
-            # Registrar en historial
             if hora_caida:
                 HISTORIAL_CAIDAS.append(f"Reinicio el {datetime.now().strftime('%d/%m')} - Caído a las {hora_caida}, Online a las {hora_reinicio}")
             else:
@@ -250,7 +257,6 @@ def monitorear():
             alerta_bajos_enviada = False
             hora_caida = None
             
-        # 2. Detección de Caída Total
         elif not esta_online and estado_anterior:
             hora_caida = datetime.now().strftime("%H:%M:%S")
             mensaje = "⚠️ **FénixZone S1 se ha caído / apagado.** Monitoreando..."
@@ -258,8 +264,7 @@ def monitorear():
             estado_anterior = False
             alerta_bajos_enviada = False
 
-        # 3. Alerta preventiva por caída de jugadores (menos de 300)
-        if esta_online:
+        if esta_online and jugadores > 0:
             if jugadores < 300 and not alerta_bajos_enviada:
                 msg_aviso = f"⚠️ **¡Atención!** Los jugadores bajaron a **{jugadores}**. Posible reinicio inminente..."
                 enviar_telegram(msg_aviso, chat_target=None)
@@ -273,4 +278,5 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=auto_ping, daemon=True).start()
     threading.Thread(target=escuchar_mensajes, daemon=True).start()
+    threading.Thread(target=notificar_actualizacion, daemon=True).start()
     monitorear()
