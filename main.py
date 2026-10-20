@@ -37,6 +37,9 @@ PUERTO_SERVIDOR = 7777
 # Suscriptores fijos (Admin, La J y Frank)
 SUSCRIPTORES = {ADMIN_CHAT_ID, "1777216565", "8661948077"}
 
+# Registro histórico de caídas/reinicios
+HISTORIAL_CAIDAS = []
+
 def enviar_telegram(mensaje, chat_target=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
@@ -55,18 +58,20 @@ def enviar_telegram(mensaje, chat_target=None):
                 print(f"Error enviando broadcast a {user_id}: {e}")
 
 def obtener_info_servidor():
-    """Consulta el servidor y extrae si está online, jugadores actuales y máximo."""
+    """Consulta el servidor SA-MP y extrae estado, jugadores, maxplayers y tiempo de respuesta."""
     try:
         ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2)
+        sock.settimeout(1.5)
         
         ip_bytes = socket.inet_aton(ip_resuelta)
         port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
         query = b"SAMP" + ip_bytes + port_bytes + b"i"
         
+        start_time = time.time()
         sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
         data, _ = sock.recvfrom(2048)
+        latencia = int((time.time() - start_time) * 1000)
         sock.close()
         
         if len(data) > 10:
@@ -77,11 +82,39 @@ def obtener_info_servidor():
             i += 2
             maxplayers = int.from_bytes(data[i:i+2], 'little')
             
-            return {"online": True, "players": players, "maxplayers": maxplayers}
+            return {
+                "online": True, 
+                "players": players, 
+                "maxplayers": maxplayers, 
+                "ping": latencia
+            }
     except Exception:
         pass
     
-    return {"online": False, "players": 0, "maxplayers": 0}
+    return {"online": False, "players": 0, "maxplayers": 0, "ping": 0}
+
+def generar_barra(actual, maximo, largo=10):
+    porcentaje = actual / maximo if maximo > 0 else 0
+    lleno = int(round(largo * porcentaje))
+    vacio = largo - lleno
+    return "🟩" * lleno + "⬜" * vacio + f" ({int(porcentaje * 100)}%)"
+
+def tiempo_hasta_pago():
+    ahora = datetime.now()
+    minuto_actual = ahora.minute
+    segundo_actual = ahora.second
+    
+    if minuto_actual < 2:
+        minutos_faltantes = 2 - minuto_actual - 1
+    else:
+        minutos_faltantes = 62 - minuto_actual - 1
+        
+    segundos_faltantes = 60 - segundo_actual
+    if segundos_faltantes == 60:
+        segundos_faltantes = 0
+        minutos_faltantes += 1
+        
+    return minutos_faltantes, segundos_faltantes
 
 def escuchar_mensajes():
     last_update_id = 0
@@ -110,9 +143,11 @@ def escuchar_mensajes():
                         
                         respuesta = (
                             "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
-                            "Estás registrado para recibir alertas automáticas cuando el servidor se reinicie, "
-                            "cuando baje de 300 jugadores (aviso preventivo) o al momento del pago diario (:02).\n\n"
-                            "🎮 Usa `/players` para ver cuántos usuarios están conectados ahora."
+                            "📌 **Comandos disponibles:**\n"
+                            "• `/estado` - Información completa del servidor.\n"
+                            "• `/players` - Ver jugadores conectados en vivo.\n"
+                            "• `/pd` - Tiempo restante para el pago diario (:02).\n"
+                            "• `/historial` - Ver el registro de últimos reinicios/caídas."
                         )
                         enviar_telegram(respuesta, chat_target=sender_id)
                         
@@ -126,14 +161,46 @@ def escuchar_mensajes():
                             )
                             enviar_telegram(notif_admin, chat_target=ADMIN_CHAT_ID)
 
+                    # Comando /pd o /pagodiario
+                    elif texto in ["/pd", "/pagodiario"] and sender_id:
+                        mins, segs = tiempo_hasta_pago()
+                        msg_pd = f"💵 **Pago Diario:** Faltan **{mins} min {segs} seg** para la entrega del pago diario (:02)."
+                        enviar_telegram(msg_pd, chat_target=sender_id)
+
                     # Comando /players o /jugadores
                     elif texto in ["/players", "/jugadores"] and sender_id:
                         info = obtener_info_servidor()
                         if info["online"]:
-                            msg_players = f"📊 **Estado de FénixZone S1:**\n\n🟢 En línea\n👥 Jugadores conectados: **{info['players']} / {info['maxplayers']}**"
+                            msg_players = f"📊 **FénixZone S1:**\n\n🟢 En línea\n👥 Jugadores: **{info['players']} / {info['maxplayers']}**"
                         else:
                             msg_players = "🔴 **FénixZone S1** se encuentra actualmente *apagado o inaccesible*."
                         enviar_telegram(msg_players, chat_target=sender_id)
+
+                    # Comando /estado
+                    elif texto in ["/estado", "/status"] and sender_id:
+                        info = obtener_info_servidor()
+                        if info["online"]:
+                            barra = generar_barra(info["players"], info["maxplayers"])
+                            msg_estado = (
+                                f"🌐 **ESTADO DEL SERVIDOR FÉNIXZONE S1**\n\n"
+                                f"• **Estado:** 🟢 En Línea\n"
+                                f"• **IP:** `{IP_SERVIDOR}:{PUERTO_SERVIDOR}`\n"
+                                f"• **Jugadores:** {info['players']} / {info['maxplayers']}\n"
+                                f"• **Capacidad:** {barra}\n"
+                                f"• **Ping/Latencia:** {info['ping']} ms"
+                            )
+                        else:
+                            msg_estado = f"🌐 **ESTADO DEL SERVIDOR FÉNIXZONE S1**\n\n• **Estado:** 🔴 Apagado / Caído\n• **IP:** `{IP_SERVIDOR}:{PUERTO_SERVIDOR}`"
+                        enviar_telegram(msg_estado, chat_target=sender_id)
+
+                    # Comando /historial o /logs
+                    elif texto in ["/historial", "/logs"] and sender_id:
+                        if HISTORIAL_CAIDAS:
+                            registro = "\n".join([f"• {item}" for item in HISTORIAL_CAIDAS[-5:]])
+                            msg_logs = f"📜 **Últimos reinicios/caídas detectados:**\n\n{registro}"
+                        else:
+                            msg_logs = "📜 **Historial:** No se han detectado caídas o reinicios recientemente."
+                        enviar_telegram(msg_logs, chat_target=sender_id)
 
                     # Comando /broadcast (Exclusivo para el Administrador)
                     elif texto.startswith("/broadcast") and sender_id == ADMIN_CHAT_ID:
@@ -150,53 +217,54 @@ def escuchar_mensajes():
             
         time.sleep(2)
 
-def temporizador_pago_diario():
-    ultimo_minuto_enviado = -1
-    print("Iniciando temporizador de pago diario (:02 cada hora)...")
-    
-    while True:
-        ahora = datetime.now()
-        if ahora.minute == 2 and ahora.minute != ultimo_minuto_enviado:
-            mensaje_pago = "💵 **Notificación:** Se ha emitido un pago diario."
-            enviar_telegram(mensaje_pago, chat_target=None)
-            ultimo_minuto_enviado = ahora.minute
-        elif ahora.minute != 2:
-            ultimo_minuto_enviado = -1
-            
-        time.sleep(10)
-
 def monitorear():
     estado_anterior = True
-    alerta_bajos_enviada = False  # Control para no repetir la alerta de pocos jugadores seguidas
-    print("Iniciando monitoreo de FénixZone S1 (cada 2 segundos)...")
+    alerta_bajos_enviada = False
+    hora_caida = None
+    print("Iniciando monitoreo avanzado de FénixZone S1 (cada 2 segundos)...")
     
     while True:
         info = obtener_info_servidor()
         esta_online = info["online"]
         jugadores = info["players"]
         
-        # 1. Detección de Reinicio (cuando vuelve a estar online tras estar apagado)
+        # Confirmación de caída (evita falsas alarmas por pequeñas fallas de red)
+        if not esta_online and estado_anterior:
+            time.sleep(1)
+            reintento = obtener_info_servidor()
+            esta_online = reintento["online"]
+        
+        # 1. Detección de Reinicio (vuelve a estar en línea)
         if esta_online and not estado_anterior:
+            hora_reinicio = datetime.now().strftime("%H:%M:%S")
             mensaje = "🚨 **El servidor se ha reiniciado y ya esta disponible**"
             enviar_telegram(mensaje, chat_target=None)
+            
+            # Registrar en historial
+            if hora_caida:
+                HISTORIAL_CAIDAS.append(f"Reinicio el {datetime.now().strftime('%d/%m')} - Caído a las {hora_caida}, Online a las {hora_reinicio}")
+            else:
+                HISTORIAL_CAIDAS.append(f"Reinicio el {datetime.now().strftime('%d/%m')} a las {hora_reinicio}")
+                
             estado_anterior = True
-            alerta_bajos_enviada = False # Reiniciamos el estado de la alerta de jugadores
+            alerta_bajos_enviada = False
+            hora_caida = None
             
         # 2. Detección de Caída Total
         elif not esta_online and estado_anterior:
+            hora_caida = datetime.now().strftime("%H:%M:%S")
             mensaje = "⚠️ **FénixZone S1 se ha caído / apagado.** Monitoreando..."
             enviar_telegram(mensaje, chat_target=None)
             estado_anterior = False
             alerta_bajos_enviada = False
 
-        # 3. Alerta preventiva por caída brusca de jugadores (menos de 300)
+        # 3. Alerta preventiva por caída de jugadores (menos de 300)
         if esta_online:
             if jugadores < 300 and not alerta_bajos_enviada:
                 msg_aviso = f"⚠️ **¡Atención!** Los jugadores bajaron a **{jugadores}**. Posible reinicio inminente..."
                 enviar_telegram(msg_aviso, chat_target=None)
-                alerta_bajos_enviada = True  # Marca que ya se envió para evitar spam
+                alerta_bajos_enviada = True
             elif jugadores >= 320:
-                # Si los jugadores vuelven a subir de 320, se reinicia el seguro para futuras alertas
                 alerta_bajos_enviada = False
             
         time.sleep(2)
@@ -205,5 +273,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=auto_ping, daemon=True).start()
     threading.Thread(target=escuchar_mensajes, daemon=True).start()
-    threading.Thread(target=temporizador_pago_diario, daemon=True).start()
     monitorear()
