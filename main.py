@@ -70,9 +70,6 @@ def obtener_info_servidor():
         sock.close()
         
         if len(data) > 10:
-            # El protocolo SA-MP devuelve los jugadores en las posiciones 11 y 13 (2 bytes cada uno en little-endian)
-            # Estructura típica de respuesta 'i': [4 bytes SAMP][4 bytes IP/Port][1 byte password][2 bytes players][2 bytes maxplayers]...
-            # Buscamos de forma segura los valores numéricos en la data recibida:
             i = 11
             password = data[i]
             i += 1
@@ -113,8 +110,8 @@ def escuchar_mensajes():
                         
                         respuesta = (
                             "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
-                            "Estás registrado para recibir alertas automáticamente cuando el Servidor 1 "
-                            "se reinicie o al momento del pago diario (:02).\n\n"
+                            "Estás registrado para recibir alertas automáticas cuando el servidor se reinicie, "
+                            "cuando baje de 300 jugadores (aviso preventivo) o al momento del pago diario (:02).\n\n"
                             "🎮 Usa `/players` para ver cuántos usuarios están conectados ahora."
                         )
                         enviar_telegram(respuesta, chat_target=sender_id)
@@ -170,21 +167,37 @@ def temporizador_pago_diario():
 
 def monitorear():
     estado_anterior = True
+    alerta_bajos_enviada = False  # Control para no repetir la alerta de pocos jugadores seguidas
     print("Iniciando monitoreo de FénixZone S1 (cada 2 segundos)...")
     
     while True:
         info = obtener_info_servidor()
         esta_online = info["online"]
+        jugadores = info["players"]
         
+        # 1. Detección de Reinicio (cuando vuelve a estar online tras estar apagado)
         if esta_online and not estado_anterior:
             mensaje = "🚨 **El servidor se ha reiniciado y ya esta disponible**"
             enviar_telegram(mensaje, chat_target=None)
             estado_anterior = True
+            alerta_bajos_enviada = False # Reiniciamos el estado de la alerta de jugadores
             
+        # 2. Detección de Caída Total
         elif not esta_online and estado_anterior:
             mensaje = "⚠️ **FénixZone S1 se ha caído / apagado.** Monitoreando..."
             enviar_telegram(mensaje, chat_target=None)
             estado_anterior = False
+            alerta_bajos_enviada = False
+
+        # 3. Alerta preventiva por caída brusca de jugadores (menos de 300)
+        if esta_online:
+            if jugadores < 300 and not alerta_bajos_enviada:
+                msg_aviso = f"⚠️ **¡Atención!** Los jugadores bajaron a **{jugadores}**. Posible reinicio inminente..."
+                enviar_telegram(msg_aviso, chat_target=None)
+                alerta_bajos_enviada = True  # Marca que ya se envió para evitar spam
+            elif jugadores >= 320:
+                # Si los jugadores vuelven a subir de 320, se reinicia el seguro para futuras alertas
+                alerta_bajos_enviada = False
             
         time.sleep(2)
 
