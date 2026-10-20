@@ -28,14 +28,14 @@ def auto_ping():
                 print(f"Error en auto-ping: {e}")
         time.sleep(300)
 
-# === NUEVO TOKEN SEGURO ===
 BOT_TOKEN = "8836352471:AAEabVwZQ4nSqo35cKXQLVpeHselFNW879s"
 ADMIN_CHAT_ID = "5484160028"
 
 IP_SERVIDOR = "s1.fenixzone.com"
 PUERTO_SERVIDOR = 7777
 
-SUSCRIPTORES = {ADMIN_CHAT_ID}
+# Suscriptores fijos (Admin, La J y Frank)
+SUSCRIPTORES = {ADMIN_CHAT_ID, "1777216565", "8661948077"}
 
 def enviar_telegram(mensaje, chat_target=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -54,6 +54,38 @@ def enviar_telegram(mensaje, chat_target=None):
             except Exception as e:
                 print(f"Error enviando broadcast a {user_id}: {e}")
 
+def obtener_info_servidor():
+    """Consulta el servidor y extrae si está online, jugadores actuales y máximo."""
+    try:
+        ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2)
+        
+        ip_bytes = socket.inet_aton(ip_resuelta)
+        port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
+        query = b"SAMP" + ip_bytes + port_bytes + b"i"
+        
+        sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
+        data, _ = sock.recvfrom(2048)
+        sock.close()
+        
+        if len(data) > 10:
+            # El protocolo SA-MP devuelve los jugadores en las posiciones 11 y 13 (2 bytes cada uno en little-endian)
+            # Estructura típica de respuesta 'i': [4 bytes SAMP][4 bytes IP/Port][1 byte password][2 bytes players][2 bytes maxplayers]...
+            # Buscamos de forma segura los valores numéricos en la data recibida:
+            i = 11
+            password = data[i]
+            i += 1
+            players = int.from_bytes(data[i:i+2], 'little')
+            i += 2
+            maxplayers = int.from_bytes(data[i:i+2], 'little')
+            
+            return {"online": True, "players": players, "maxplayers": maxplayers}
+    except Exception:
+        pass
+    
+    return {"online": False, "players": 0, "maxplayers": 0}
+
 def escuchar_mensajes():
     last_update_id = 0
     print("Escuchando comandos de Telegram...")
@@ -68,21 +100,22 @@ def escuchar_mensajes():
                 for result in resp.get("result", []):
                     last_update_id = result["update_id"]
                     message = result.get("message", {})
-                    texto = message.get("text", "")
+                    texto = message.get("text", "").strip().lower()
                     sender = message.get("from", {})
                     sender_id = str(sender.get("id", ""))
                     first_name = sender.get("first_name", "Desconocido")
                     username = sender.get("username", "Sin username")
                     
                     # Comando /start
-                    if texto.strip() == "/start" and sender_id:
+                    if texto == "/start" and sender_id:
                         es_nuevo = sender_id not in SUSCRIPTORES
                         SUSCRIPTORES.add(sender_id)
                         
                         respuesta = (
                             "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
-                            "Estás registrado para recibir alertas automáticamente en privado cuando el Servidor 1 "
-                            "se caiga, se reinicie o al momento del pago diario (:02)."
+                            "Estás registrado para recibir alertas automáticamente cuando el Servidor 1 "
+                            "se reinicie o al momento del pago diario (:02).\n\n"
+                            "🎮 Usa `/players` para ver cuántos usuarios están conectados ahora."
                         )
                         enviar_telegram(respuesta, chat_target=sender_id)
                         
@@ -96,9 +129,18 @@ def escuchar_mensajes():
                             )
                             enviar_telegram(notif_admin, chat_target=ADMIN_CHAT_ID)
 
+                    # Comando /players o /jugadores
+                    elif texto in ["/players", "/jugadores"] and sender_id:
+                        info = obtener_info_servidor()
+                        if info["online"]:
+                            msg_players = f"📊 **Estado de FénixZone S1:**\n\n🟢 En línea\n👥 Jugadores conectados: **{info['players']} / {info['maxplayers']}**"
+                        else:
+                            msg_players = "🔴 **FénixZone S1** se encuentra actualmente *apagado o inaccesible*."
+                        enviar_telegram(msg_players, chat_target=sender_id)
+
                     # Comando /broadcast (Exclusivo para el Administrador)
                     elif texto.startswith("/broadcast") and sender_id == ADMIN_CHAT_ID:
-                        partes = texto.split(" ", 1)
+                        partes = message.get("text", "").split(" ", 1)
                         if len(partes) > 1:
                             anuncio = f"📢 **Anuncio Oficial:**\n\n{partes[1]}"
                             enviar_telegram(anuncio, chat_target=None)
@@ -126,24 +168,13 @@ def temporizador_pago_diario():
             
         time.sleep(10)
 
-def verificar_servidor():
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2)
-        query = b"SAMP" + socket.inet_aton("127.0.0.1") + b"\x00\x00p"
-        sock.sendto(query, (IP_SERVIDOR, PUERTO_SERVIDOR))
-        data, _ = sock.recvfrom(1024)
-        sock.close()
-        return True if data else False
-    except Exception:
-        return False
-
 def monitorear():
     estado_anterior = True
     print("Iniciando monitoreo de FénixZone S1 (cada 2 segundos)...")
     
     while True:
-        esta_online = verificar_servidor()
+        info = obtener_info_servidor()
+        esta_online = info["online"]
         
         if esta_online and not estado_anterior:
             mensaje = "🚨 **El servidor se ha reiniciado y ya esta disponible**"
@@ -155,7 +186,7 @@ def monitorear():
             enviar_telegram(mensaje, chat_target=None)
             estado_anterior = False
             
-        time.sleep(2) # Chequeo cada 2 segundos
+        time.sleep(2)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
