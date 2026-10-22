@@ -3,6 +3,7 @@ import time
 import socket
 import threading
 import requests
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime
 from flask import Flask
@@ -64,45 +65,30 @@ def notificar_actualizacion():
     time.sleep(3)
     mensaje = (
         "🛠 **¡Script Actualizado / Reiniciado!**\n\n"
-        "El administrador @x_george ha aplicado la actualización con el nuevo comando `/playersweb`. 🚀"
+        "El administrador @x_george ha aplicado la actualización con el buscador web mejorado. 🚀"
     )
     enviar_telegram(mensaje, chat_target=ADMIN_CHAT_ID)
 
 def obtener_info_desde_web():
-    """Extrae el estado y número de jugadores analizando el HTML de la página web oficial."""
+    """Extrae los jugadores escaneando cualquier contador numérico estilo X/600 en la web."""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(WEB_URL, headers=headers, timeout=6)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            texto_pagina = soup.get_text()
+            texto_total = soup.get_text()
             
-            # Buscamos la sección del Servidor 1 en la web
-            if "s1.fenixzone.com" in texto_pagina:
-                idx = texto_pagina.find("s1.fenixzone.com")
-                fragmento = texto_pagina[idx:idx+200]
-                
-                for linea in fragmento.split("\n"):
-                    if "Jugadores conectados:" in linea:
-                        partes = linea.split(":")[-1].strip().split("/")
-                        players = int(partes[0].strip())
-                        maxplayers = int(partes[1].strip())
-                        return {"online": True, "players": players, "maxplayers": maxplayers}
+            # Busca patrones numéricos como "593/600" o similares en la página
+            coincidencias = re.findall(r'(\d+)\s*/\s*(\d{3,4})', texto_total)
             
-            # Búsqueda alternativa generalizada en todo el texto si cambia la estructura
-            for el in soup.find_all(text=True):
-                if "s1.fenixzone.com" in el:
-                    parent = el.parent.parent if el.parent else None
-                    if parent:
-                        parent_text = parent.get_text()
-                        if "/" in parent_text and "Jugadores" in parent_text:
-                            import re
-                            nums = re.findall(r'\d+/\d+', parent_text)
-                            if nums:
-                                p_act, p_max = nums[0].split('/')
-                                return {"online": True, "players": int(p_act), "maxplayers": int(p_max)}
-                                
+            if coincidencias:
+                for act, maxp in coincidencias:
+                    actual = int(act)
+                    maximo = int(maxp)
+                    if 100 <= maximo <= 1000 and 0 <= actual <= maximo:
+                        return {"online": True, "players": actual, "maxplayers": maximo}
+                        
     except Exception as e:
         print(f"Error leyendo la web de FénixZone: {e}")
         
@@ -176,7 +162,6 @@ def escuchar_mensajes():
                             )
                             enviar_telegram(notif_admin, chat_target=ADMIN_CHAT_ID)
 
-                    # NUEVO COMANDO /playersweb
                     elif texto in ["/playersweb", "/webplayers"] and sender_id:
                         info = obtener_info_desde_web()
                         if info["online"]:
