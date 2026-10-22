@@ -3,6 +3,7 @@ import time
 import socket
 import threading
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
 from flask import Flask
 
@@ -33,6 +34,7 @@ ADMIN_CHAT_ID = "5484160028"
 
 IP_SERVIDOR = "s1.fenixzone.com"
 PUERTO_SERVIDOR = 7777
+WEB_URL = "https://fenixzone.com/"
 
 # Suscriptores fijos (Admin, La J y Frank)
 SUSCRIPTORES = {ADMIN_CHAT_ID, "1777216565", "8661948077"}
@@ -59,52 +61,87 @@ def enviar_telegram(mensaje, chat_target=None):
 
 def notificar_actualizacion():
     """Envía una alerta al administrador cada vez que el script arranca o se actualiza."""
-    time.sleep(3) # Espera a que el bot inicie conexión
+    time.sleep(3)
     mensaje = (
         "🛠 **¡Script Actualizado / Reiniciado!**\n\n"
-        "El administrador @x_george ha aplicado un nuevo ajuste o modificación en el código del bot. 🚀"
+        "El administrador @x_george ha aplicado un nuevo ajuste o modificación en el código del bot (Lectura Web). 🚀"
     )
     enviar_telegram(mensaje, chat_target=ADMIN_CHAT_ID)
 
-def obtener_info_servidor():
-    """Consulta el servidor SA-MP con doble reintento para evitar datos erróneos."""
-    for intento in range(2):
-        try:
-            ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(2)
+def obtener_info_desde_web():
+    """Extrae el estado y número de jugadores directamente analizando la página web oficial."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        response = requests.get(WEB_URL, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            texto_pagina = soup.get_text()
             
-            ip_bytes = socket.inet_aton(ip_resuelta)
-            port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
-            query = b"SAMP" + ip_bytes + port_bytes + b"i"
-            
-            start_time = time.time()
-            sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
-            data, _ = sock.recvfrom(2048)
-            latencia = int((time.time() - start_time) * 1000)
-            sock.close()
-            
-            if len(data) > 10:
-                i = 11
-                password = data[i]
-                i += 1
-                players = int.from_bytes(data[i:i+2], 'little')
-                i += 2
-                maxplayers = int.from_bytes(data[i:i+2], 'little')
+            # Buscamos la sección del Servidor 1 en el texto de la web
+            # El formato en la web suele ser "Jugadores conectados: 593/600" o similar
+            if "s1.fenixzone.com" in texto_pagina:
+                # Extraemos el fragmento donde se menciona el servidor 1
+                idx = texto_pagina.find("s1.fenixzone.com")
+                fragmento = texto_pagina[idx:idx+150] # Tomamos los caracteres siguientes
                 
-                if players == 0 and intento == 0:
-                    time.sleep(0.5)
-                    continue
-                
-                return {
-                    "online": True, 
-                    "players": players, 
-                    "maxplayers": maxplayers, 
-                    "ping": latencia
-                }
-        except Exception:
-            pass
-        time.sleep(0.5)
+                # Buscamos la línea de jugadores conectados
+                for linea in fragmento.split("\n"):
+                    if "Jugadores conectados:" in linea:
+                        partes = linea.split(":")[-1].strip().split("/")
+                        players = int(partes[0].strip())
+                        maxplayers = int(partes[1].strip())
+                        return {"online": True, "players": players, "maxplayers": maxplayers, "ping": 15}
+            
+            # Método alternativo por si cambia la estructura de texto exacto
+            for el in soup.find_all(text=True):
+                if "s1.fenixzone.com" in el:
+                    # Buscamos en elementos cercanos
+                    parent = el.parent.parent if el.parent else None
+                    if parent:
+                        parent_text = parent.get_text()
+                        if "/" in parent_text and "Jugadores" in parent_text:
+                            # Intentamos aislar los números
+                            import re
+                            nums = re.findall(r'\d+/\d+', parent_text)
+                            if nums:
+                                p_act, p_max = nums[0].split('/')
+                                return {"online": True, "players": int(p_act), "maxplayers": int(p_max), "ping": 15}
+                                
+    except Exception as e:
+        print(f"Error leyendo la web de FénixZone: {e}")
+        
+    # Plan de respaldo: si falla la web, usamos el socket UDP tradicional de respaldo
+    return obtener_info_servidor_udp()
+
+def obtener_info_servidor_udp():
+    """Respaldo mediante socket UDP por si la página web llegara a estar en mantenimiento."""
+    try:
+        ip_resuelta = socket.gethostbyname(IP_SERVIDOR)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2)
+        
+        ip_bytes = socket.inet_aton(ip_resuelta)
+        port_bytes = PUERTO_SERVIDOR.to_bytes(2, 'little')
+        query = b"SAMP" + ip_bytes + port_bytes + b"i"
+        
+        start_time = time.time()
+        sock.sendto(query, (ip_resuelta, PUERTO_SERVIDOR))
+        data, _ = sock.recvfrom(2048)
+        latencia = int((time.time() - start_time) * 1000)
+        sock.close()
+        
+        if len(data) > 10:
+            i = 11
+            password = data[i]
+            i += 1
+            players = int.from_bytes(data[i:i+2], 'little')
+            i += 2
+            maxplayers = int.from_bytes(data[i:i+2], 'little')
+            
+            return {"online": True, "players": players, "maxplayers": maxplayers, "ping": latencia}
+    except Exception:
+        pass
     
     return {"online": False, "players": 0, "maxplayers": 0, "ping": 0}
 
@@ -156,10 +193,10 @@ def escuchar_mensajes():
                         SUSCRIPTORES.add(sender_id)
                         
                         respuesta = (
-                            "🤖 **¡Bot de Monitoreo FénixZone S1 Activado!**\n\n"
+                            "🤖 **¡Bot de Monitoreo FénixZone S1 (Modo Web) Activado!**\n\n"
                             "📌 **Comandos disponibles:**\n"
                             "• `/estado` - Información completa del servidor.\n"
-                            "• `/players` - Ver jugadores conectados en vivo.\n"
+                            "• `/players` - Ver jugadores conectados en vivo desde la web.\n"
                             "• `/pd` - Tiempo restante para el pago diario (:02).\n"
                             "• `/historial` - Ver el registro de últimos reinicios/caídas."
                         )
@@ -181,24 +218,23 @@ def escuchar_mensajes():
                         enviar_telegram(msg_pd, chat_target=sender_id)
 
                     elif texto in ["/players", "/jugadores"] and sender_id:
-                        info = obtener_info_servidor()
+                        info = obtener_info_desde_web()
                         if info["online"]:
-                            msg_players = f"📊 **FénixZone S1:**\n\n🟢 En línea\n👥 Jugadores: **{info['players']} / {info['maxplayers']}**"
+                            msg_players = f"📊 **FénixZone S1 (Vía Web):**\n\n🟢 En línea\n👥 Jugadores: **{info['players']} / {info['maxplayers']}**"
                         else:
                             msg_players = "🔴 **FénixZone S1** se encuentra actualmente *apagado o inaccesible*."
                         enviar_telegram(msg_players, chat_target=sender_id)
 
                     elif texto in ["/estado", "/status"] and sender_id:
-                        info = obtener_info_servidor()
+                        info = obtener_info_desde_web()
                         if info["online"]:
                             barra = generar_barra(info["players"], info["maxplayers"])
                             msg_estado = (
                                 f"🌐 **ESTADO DEL SERVIDOR FÉNIXZONE S1**\n\n"
-                                f"• **Estado:** 🟢 En Línea\n"
+                                f"• **Estado:** 🟢 En Línea (Monitoreo Web)\n"
                                 f"• **IP:** `{IP_SERVIDOR}:{PUERTO_SERVIDOR}`\n"
                                 f"• **Jugadores:** {info['players']} / {info['maxplayers']}\n"
-                                f"• **Capacidad:** {barra}\n"
-                                f"• **Ping/Latencia:** {info['ping']} ms"
+                                f"• **Capacidad:** {barra}"
                             )
                         else:
                             msg_estado = f"🌐 **ESTADO DEL SERVIDOR FÉNIXZONE S1**\n\n• **Estado:** 🔴 Apagado / Caído\n• **IP:** `{IP_SERVIDOR}:{PUERTO_SERVIDOR}`"
@@ -209,7 +245,7 @@ def escuchar_mensajes():
                             registro = "\n".join([f"• {item}" for item in HISTORIAL_CAIDAS[-5:]])
                             msg_logs = f"📜 **Últimos reinicios/caídas detectados:**\n\n{registro}"
                         else:
-                            msg_logs = "📜 **Historial:** No se han detectado caídas o reinicios recientemente."
+                            msg_logs = f"📜 **Historial:** No se han detectado caídas o reinicios recientemente."
                         enviar_telegram(msg_logs, chat_target=sender_id)
 
                     elif texto.startswith("/broadcast") and sender_id == ADMIN_CHAT_ID:
@@ -230,19 +266,13 @@ def monitorear():
     estado_anterior = True
     alerta_bajos_enviada = False
     hora_caida = None
-    print("Iniciando monitoreo de FénixZone S1 (cada 2 segundos)...")
+    print("Iniciando monitoreo web de FénixZone S1 (cada 5 segundos)...")
     
     while True:
-        info = obtener_info_servidor()
+        info = obtener_info_desde_web()
         esta_online = info["online"]
         jugadores = info["players"]
         
-        if esta_online and jugadores == 0:
-            time.sleep(1)
-            verificacion_extra = obtener_info_servidor()
-            if verificacion_extra["online"] and verificacion_extra["players"] > 0:
-                jugadores = verificacion_extra["players"]
-
         if esta_online and not estado_anterior:
             hora_reinicio = datetime.now().strftime("%H:%M:%S")
             mensaje = "🚨 **El servidor se ha reiniciado y ya esta disponible**"
@@ -266,13 +296,14 @@ def monitorear():
 
         if esta_online and jugadores > 0:
             if jugadores < 300 and not alerta_bajos_enviada:
-                msg_aviso = f"⚠️ **¡Atención!** Los jugadores bajaron a **{jugadores}**. Posible reinicio inminente..."
+                msg_aviso = f"⚠️ **¡Atención!** Los jugadores en la web bajaron a **{jugadores}**. Posible reinicio inminente..."
                 enviar_telegram(msg_aviso, chat_target=None)
                 alerta_bajos_enviada = True
             elif jugadores >= 320:
                 alerta_bajos_enviada = False
             
-        time.sleep(2)
+        # Al ser lectura web, hacemos una pausa de 5 o 10 segundos para no saturar la página oficial
+        time.sleep(5)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
